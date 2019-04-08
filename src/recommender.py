@@ -1,12 +1,12 @@
 import numpy as np
 from enum import Enum
-from jikanpy import Jikan
 import pickle
 import time
-import jikanpy
 import requests
+import requests_cache
 from triarray import TriMatrix
 import triarray
+
 
 class Type(Enum):
     TV = 1
@@ -34,9 +34,9 @@ class WeightingType(Enum):
     QUADRATIC_PERSONAL = 6
 
 
-jikan = Jikan()
+requests_cache.install_cache(cache_name='recommender_cache', backend='sqlite', expire_after=600)
 quadratic_weights = (0, -4, -2, -1, 0, 0.5, 1, 2, 4, 8, 16)
-all_types = (Type.TV, Type. TV_SHORT, Type.MOVIE, Type.SPECIAL, Type.OVA, Type.ONA, Type.MUSIC)
+default_types = (Type.TV, Type.TV_SHORT, Type.MOVIE, Type.SPECIAL, Type.OVA, Type.ONA, Type.MUSIC)
 tri = np.load('../resources/tag_based/trimatrix.npy')
 matrix = TriMatrix(tri, diag_val=1.0)
 del tri
@@ -49,21 +49,36 @@ with open('../resources/tag_based/animes.pkl', 'rb') as f:
     animes = pickle.load(f)
 
 
-def recommend_anime(user, n=50, types=all_types, weighting_type=WeightingType.ABOVE_AVG_OFFSET, site=Site.ANY, genres=[]):
+def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingType.ABOVE_AVG_OFFSET, site=Site.ANY,
+                    genres=(), tags=()):
+    if n is None:
+        n = 30
+    if types is None:
+        types = default_types
+    if weighting_type is None:
+        weighting_type = WeightingType.ABOVE_AVG_LINEAR
+    if site is None:
+        site = Site.ANY
+    if genres is None:
+        genres = []
+    if tags is None:
+        tags = []
     if site == Site.ANY:
         # try all sites, take the first that yields a result
-        return recommend_anime_mal(user, n, types, weighting_type)
+        return recommend_anime_mal(user, n, types, weighting_type, genres, tags)
     elif site == Site.MAL:
-        return recommend_anime_mal(user, n, types, weighting_type)
+        return recommend_anime_mal(user, n, types, weighting_type, genres, tags)
 
 
-def recommend_anime_mal(user, n=50, types=all_types, weighting_type=WeightingType.QUADRATIC_PERSONAL):
+def recommend_anime_mal(user, n=50, types=default_types, weighting_type=WeightingType.QUADRATIC_PERSONAL,
+                        genres=(), tags=()):
     # get watchlist and scores
     watchlist, scores = get_mal_watchlist(user)
-    return recommend_anime_generic(scores, watchlist, n, types, weighting_type)
+    return recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags)
 
 
-def recommend_anime_generic(scores, watchlist, n, types, weighting_type):
+def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags):
+    type_names = [Type(t).name for t in types]
     if len(watchlist) == 0:
         return []
     similarity_vec = get_similar(watchlist, scores, weighting_type)
@@ -72,12 +87,25 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type):
     sorted_vec = [(i[0], i[1] / largest) for i in sorted_vec]
     recommendations = []
     cur = 0
-    start = time.time()
+    print(animes[0])
     while len(recommendations) < n and cur < len(sorted_vec):
         if sorted_vec[cur][0] not in watchlist:
-            recommendations.append(sorted_vec[cur])
+            conforms = True
+            anime = animes[sorted_vec[cur][0]]
+            for genre in genres:
+                if genre not in anime['genres']:
+                    conforms = False
+            for tag in tags:
+                if tag not in [i[0] for i in anime['tags']]:
+                    conforms = False
+            if anime['type'] not in type_names:
+                print('RIP type')
+                print(anime['type'])
+                conforms = False
+            if conforms:
+                recommendations.append(sorted_vec[cur])
         cur += 1
-    print('Recommendations: ' + str(time.time() - start))
+    print(cur)
     max_width = max([len(animes[r[0]]['title']) for r in recommendations])
     for rec in recommendations:
         print(f'{animes[rec[0]]["title"]:{max_width + 3}} Similarity: {rec[1]:.{3}}')
@@ -87,7 +115,10 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type):
 def get_mal_watchlist_page(user, page):
     url = 'https://myanimelist.net/animelist/' + user + '/load.json?offset=' + str(300*(page-1)) + '&status=7'
     request = requests.get(url)
-    return request.json()
+    if request.status_code != 200:
+        return []
+    else:
+        return request.json()
 
 
 def get_mal_watchlist(user):
@@ -97,11 +128,7 @@ def get_mal_watchlist(user):
     scores = []
     while loop:
         print(i)
-        try:
-            watchlist_page = get_mal_watchlist_page(user, i)
-        except jikanpy.exceptions.APIException:
-            print('API Exception occurred')
-            break
+        watchlist_page = get_mal_watchlist_page(user, i)
         if len(watchlist_page) == 0:
             loop = False
         for anime in watchlist_page:
@@ -120,12 +147,9 @@ def get_mal_watchlist(user):
 
 def get_similar(watchlist, scores, weighting_type):
     similarity_vector = np.zeros(len(matrix[0]))
-    score_sum = 0
     scores = get_weights(scores, weighting_type)
     for i in range(len(watchlist)):
         similarity_vector += scores[i] * get_row(watchlist[i])
-        score_sum += scores[i]
-    similarity_vector *= 1/score_sum
     return similarity_vector
 
 
