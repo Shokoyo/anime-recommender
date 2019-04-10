@@ -244,7 +244,7 @@ def save_similarity_matrix():
 
 
 init()
-model = anime_embedding_model(anime_index, tag_index, embedding_size=30)
+model = anime_embedding_model(anime_index, tag_index, embedding_size=15)
 model.summary()
 
 train = False
@@ -258,13 +258,13 @@ if train:
     h = model.fit_generator(gen, epochs=30,
                             steps_per_epoch=len(pairs) // n_positive,
                             verbose=2)
-    model.save('models/tag_based_extended.h5')
+    model.save('models/tag_based_extended_rank_dim15.h5')
 else:
-    model.load_weights('models/tag_based_extended.h5')
+    model.load_weights('models/tag_based_extended_rank_dim15.h5')
 
 # Extract embeddings
 anime_weights = extract_weights('anime_embedding', model)
 tag_weights = extract_weights('tag_embedding', model)
-find_similar('Shingeki no Kyojin', anime_weights, anime_index, index_anime, tag_index, index_tag, n=20)
-save_all()
-save_similarity_matrix()
+find_similar('Shinsekai yori', anime_weights, anime_index, index_anime, tag_index, index_tag, n=20)
+# save_all()
+# save_similarity_matrix()

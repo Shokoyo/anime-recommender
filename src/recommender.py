@@ -1,11 +1,9 @@
 import numpy as np
 from enum import Enum
 import pickle
-import time
 import requests
 import requests_cache
 from triarray import TriMatrix
-import triarray
 
 
 class Type(Enum):
@@ -91,7 +89,7 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres,
     while len(recommendations) < n and cur < len(sorted_vec):
         if sorted_vec[cur][0] not in watchlist:
             conforms = True
-            anime = animes[sorted_vec[cur][0]]
+            anime = get_starting_anime(animes[sorted_vec[cur][0]], watchlist)
             for genre in genres:
                 if genre not in anime['genres']:
                     conforms = False
@@ -99,17 +97,30 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres,
                 if tag not in [i[0] for i in anime['tags']]:
                     conforms = False
             if anime['type'] not in type_names:
-                print('RIP type')
-                print(anime['type'])
+                conforms = False
+            if anilist_index[anime['anime_id']] in [r[0] for r in recommendations]:
                 conforms = False
             if conforms:
-                recommendations.append(sorted_vec[cur])
+                recommendations.append((anilist_index[anime['anime_id']], sorted_vec[cur][1]))
         cur += 1
     print(cur)
     max_width = max([len(animes[r[0]]['title']) for r in recommendations])
     for rec in recommendations:
         print(f'{animes[rec[0]]["title"]:{max_width + 3}} Similarity: {rec[1]:.{3}}')
     return [(int(animes[r[0]]['anime_id']), r[1]) for r in recommendations]
+
+
+# get the "starting point" for an OVA or sequel anime ("earliest" anime not on watchlist)
+def get_starting_anime(anime, watchlist):
+    for relation in anime['relations']:
+        for relation_id, relation_type in relation.items():
+            if relation_type == 'PREQUEL' and anilist_index[relation_id] not in watchlist:
+                if anime['title'] == 'Mob Psycho 100 II':
+                    print(anime)
+                return get_starting_anime(animes[anilist_index[relation_id]], watchlist)
+            elif relation_type == 'PARENT' and anilist_index[relation_id] not in watchlist:
+                return get_starting_anime(animes[anilist_index[relation_id]], watchlist)
+    return anime
 
 
 def get_mal_watchlist_page(user, page):

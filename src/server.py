@@ -11,7 +11,8 @@ error = {'error':
                         'id': 404,
                         'message': 'User not found or watchlist empty'
                     }
-                 }
+         }
+
 
 def handle_list(list):
     if list is None:

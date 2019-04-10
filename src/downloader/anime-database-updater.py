@@ -40,6 +40,17 @@ Page (page: $page, perPage: 50) {
                 native
                 romaji
             }
+            startDate {
+                year
+                month
+                 day
+            }
+            endDate {
+                year
+                month
+                day
+            }
+            season
             relations {
                 edges {
                     node {
@@ -57,16 +68,18 @@ Page (page: $page, perPage: 50) {
 '''
 
 url = 'https://graphql.anilist.co'
-
-# for i in range(1, 254):
-#     response = requests.post(url, json={'query': query, 'variables': {'page': i}})
-#     if response.status_code != 200:
-#         print(response.status_code)
-#         print(response.json())
-#     for e in response.json()['data']['Page']['media']:
-#         new_relations = []
-#         for relation in e['relations']['edges']:
-#             new_relations.append({str(relation['node']['id']): relation['relationType']})
-#         e['relations'] = new_relations
-#         col_ref.document(str(e['id'])).set(e)
-#     time.sleep(0.7)
+response = requests.post(url, json={'query': query, 'variables': {'page': 1}})
+lastPage = int(response.json()['data']['Page']['pageInfo']['lastPage'])
+for i in range(231, lastPage + 1):  # 97 bis 150 könnten fehlen. 231 oder 243 bis last page fehlen
+    print(i)
+    response = requests.post(url, json={'query': query, 'variables': {'page': i}})
+    if response.status_code != 200:
+        print(response.status_code)
+        print(response.json())
+    for e in response.json()['data']['Page']['media']:
+        new_relations = []
+        for relation in e['relations']['edges']:
+            new_relations.append({str(relation['node']['id']): relation['relationType']})
+        e['relations'] = new_relations
+        col_ref.document(str(e['id'])).set(e)
+    time.sleep(0.7)
