@@ -37,14 +37,20 @@ quadratic_weights = (0, -4, -2, -1, 0, 0.5, 1, 2, 4, 8, 16)
 default_types = (Type.TV, Type.TV_SHORT, Type.MOVIE, Type.SPECIAL, Type.OVA, Type.ONA, Type.MUSIC)
 tri = np.load('../resources/tag_based/trimatrix.npy')
 matrix = TriMatrix(tri, diag_val=1.0)
+PROXER_API_URL = 'https://proxer.me/api/v1/user/list'
 del tri
 
+with open('../resources/proxer_api_key', 'r') as f:
+    proxer_api_key = f.readlines()[0].strip()
+PROXER_HEADER = {'proxer-api-key': proxer_api_key}
 with open('../resources/tag_based/mal_index.pkl', 'rb') as f:
     mal_index = pickle.load(f)
 with open('../resources/tag_based/anilist_index.pkl', 'rb') as f:
     anilist_index = pickle.load(f)
 with open('../resources/tag_based/animes.pkl', 'rb') as f:
     animes = pickle.load(f)
+with open('../resources/tag_based/proxer_index.pkl', 'rb') as f:
+    proxer_index = pickle.load(f)
 
 
 def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingType.ABOVE_AVG_OFFSET, site=Site.ANY,
@@ -63,7 +69,12 @@ def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingTyp
         tags = []
     if site == Site.ANY:
         # try all sites, take the first that yields a result
-        return recommend_anime_mal(user, n, types, weighting_type, genres, tags)
+        recommendations = recommend_anime_mal(user, n, types, weighting_type, genres, tags)
+        if recommendations:
+            return recommendations
+        recommendations = recommend_anime_proxer(user, n, types, weighting_type, genres, tags)
+        if recommendations:
+            return recommendations
     elif site == Site.MAL:
         return recommend_anime_mal(user, n, types, weighting_type, genres, tags)
 
@@ -75,11 +86,40 @@ def recommend_anime_mal(user, n=50, types=default_types, weighting_type=Weightin
     return recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags)
 
 
-def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags):
+def recommend_anime_proxer(user, n=50, types=default_types, weighting_type=WeightingType.QUADRATIC_PERSONAL,
+                        genres=(), tags=()):
+    watchlist, scores = get_proxer_watchlist(user)
+    print(watchlist)
+    print(scores)
+    return recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags)
+
+
+def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags, consider_unrated=False):
     type_names = [Type(t).name for t in types]
+    avg_score = np.average(scores)
+    if avg_score == 0:
+        avg_score = 5
     if len(watchlist) == 0:
         return []
-    similarity_vec = get_similar(watchlist, scores, weighting_type)
+    scores_filtered = scores[:]
+    watchlist_filtered = watchlist[:]
+    # Remove unrated entries or use avg score
+    if consider_unrated:
+        for i in range(len(scores)):
+            if scores[i] == 0:
+                scores_filtered[i] = avg_score
+        print(scores_filtered)
+    else:
+        non_zero_indices = []
+        for i in range(len(scores)):
+            if scores[i] != 0:
+                non_zero_indices.append(i)
+        scores_filtered = [scores[i] for i in non_zero_indices]
+        watchlist_filtered = [watchlist[i] for i in non_zero_indices]
+        if len(scores_filtered) == 0:
+            return recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres, tags, True)
+
+    similarity_vec = get_similar(watchlist_filtered, scores_filtered, weighting_type)
     sorted_vec = [i for i in sorted(enumerate(similarity_vec), key=lambda x: x[1], reverse=True)]
     largest = sorted_vec[0][1]
     sorted_vec = [(i[0], i[1] / largest) for i in sorted_vec]
@@ -89,7 +129,7 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres,
     while len(recommendations) < n and cur < len(sorted_vec):
         if sorted_vec[cur][0] not in watchlist:
             conforms = True
-            anime = get_starting_anime(animes[sorted_vec[cur][0]], watchlist)
+            anime = get_starting_anime(animes[sorted_vec[cur][0]], watchlist, [])
             for genre in genres:
                 if genre not in anime['genres']:
                     conforms = False
@@ -111,15 +151,18 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres,
 
 
 # get the "starting point" for an OVA or sequel anime ("earliest" anime not on watchlist)
-def get_starting_anime(anime, watchlist):
+def get_starting_anime(anime, watchlist, visited):
+    visited.append(anime['anime_id'])
     for relation in anime['relations']:
         for relation_id, relation_type in relation.items():
+            if relation_id in visited and anime['type'] == 'TV':
+                continue
             if relation_type == 'PREQUEL' and anilist_index[relation_id] not in watchlist:
-                if anime['title'] == 'Mob Psycho 100 II':
-                    print(anime)
-                return get_starting_anime(animes[anilist_index[relation_id]], watchlist)
+                visited.append(relation_id)
+                return get_starting_anime(animes[anilist_index[relation_id]], watchlist, visited)
             elif relation_type == 'PARENT' and anilist_index[relation_id] not in watchlist:
-                return get_starting_anime(animes[anilist_index[relation_id]], watchlist)
+                visited.append(relation_id)
+                return get_starting_anime(animes[anilist_index[relation_id]], watchlist, visited)
     return anime
 
 
@@ -146,13 +189,34 @@ def get_mal_watchlist(user):
             mal_id = str(anime['anime_id'])
             if mal_id not in mal_index:
                 continue
-            if anime['score'] == 0:
-                continue
             # if 'Comedy' not in animes[mal_index[mal_id]]['genres'] or 'Romance' not in animes[mal_index[mal_id]]['genres']:
             #     continue
             watchlist.append(mal_index[mal_id])
             scores.append(anime['score'])
         i += 1
+    return watchlist, scores
+
+
+def get_proxer_watchlist(user):
+    watchlist = []
+    scores = []
+    i = 0
+    finished = False
+    while not finished:
+        request = requests.get(PROXER_API_URL, params={
+            'username': user,
+            'kat': 'anime',
+            'p': i
+        }, headers=PROXER_HEADER)
+        i += 1
+        result = request.json()
+        print(result)
+        for entry in result['data']:
+            if entry['state'] != 2 and int(entry['id']) in proxer_index:
+                watchlist.append(proxer_index[int(entry['id'])])
+                scores.append(int(entry['rating']))
+        if len(result['data']) == 0 or result['error'] == 1:
+            finished = True
     return watchlist, scores
 
 
@@ -196,8 +260,11 @@ def get_weights(scores, weighting_type):
     elif weighting_type == WeightingType.ABOVE_AVG_OFFSET:
         avg = np.average(scores)
         scores = [score - avg + 1 for score in scores]
+        print(scores)
     elif weighting_type == WeightingType.LINEAR:
         return scores
+    if all(v == 0 for v in scores):
+        scores = [score + 1 for score in scores]
     return scores
 
 
