@@ -77,6 +77,8 @@ def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingTyp
             return recommendations
     elif site == Site.MAL:
         return recommend_anime_mal(user, n, types, weighting_type, genres, tags)
+    elif site == Site.PROXER:
+        return recommend_anime_proxer(user, n, types, weighting_type, genres, tags)
 
 
 def recommend_anime_mal(user, n=50, types=default_types, weighting_type=WeightingType.QUADRATIC_PERSONAL,
