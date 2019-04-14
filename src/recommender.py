@@ -3,6 +3,7 @@ from enum import Enum
 import pickle
 import requests
 import requests_cache
+import inspect
 from triarray import TriMatrix
 
 
@@ -53,7 +54,7 @@ with open('../resources/tag_based/proxer_index.pkl', 'rb') as f:
     proxer_index = pickle.load(f)
 
 
-def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingType.ABOVE_AVG_OFFSET, site=Site.ANY,
+def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingType.ABOVE_AVG_LINEAR, site=Site.ANY,
                     genres=(), tags=()):
     if n is None:
         n = 30
@@ -67,6 +68,14 @@ def recommend_anime(user, n=30, types=default_types, weighting_type=WeightingTyp
         genres = []
     if tags is None:
         tags = []
+    types = [Type(t) for t in types]
+    weighting_type = WeightingType(weighting_type)
+    site = Site(site)
+    frame = inspect.currentframe()
+    args, _, _, values = inspect.getargvalues(frame)
+    print('function name "%s"' % inspect.getframeinfo(frame)[2])
+    for i in args:
+        print("    %s = %s" % (i, values[i]))
     if site == Site.ANY:
         # try all sites, take the first that yields a result
         recommendations = recommend_anime_mal(user, n, types, weighting_type, genres, tags)
@@ -127,7 +136,6 @@ def recommend_anime_generic(scores, watchlist, n, types, weighting_type, genres,
     sorted_vec = [(i[0], i[1] / largest) for i in sorted_vec]
     recommendations = []
     cur = 0
-    print(animes[0])
     while len(recommendations) < n and cur < len(sorted_vec):
         if sorted_vec[cur][0] not in watchlist:
             conforms = True
@@ -157,7 +165,14 @@ def get_starting_anime(anime, watchlist, visited):
     visited.append(anime['anime_id'])
     for relation in anime['relations']:
         for relation_id, relation_type in relation.items():
-            if relation_id in visited and anime['type'] == 'TV':
+            if relation_id not in anilist_index:
+                continue
+            if relation_id in visited:
+                if animes[anilist_index[relation_id]]['type'] == 'TV':
+                    if relation_type == 'PREQUEL' or relation_type == 'PARENT':
+                        return animes[anilist_index[relation_id]]
+                    else:
+                        continue
                 continue
             if relation_type == 'PREQUEL' and anilist_index[relation_id] not in watchlist:
                 visited.append(relation_id)
